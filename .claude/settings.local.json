@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m src.main)",
+      "Bash(python main.py)",
+      "Bash(python -c \"from recommender import load_songs; songs = load_songs\\(''../data/songs.csv''\\); print\\(f''Loaded songs: {len\\(songs\\)}''\\); print\\(songs[0]\\)\")",
+      "Bash(python -c \":*)"
+    ]
+  }
+}

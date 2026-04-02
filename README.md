@@ -176,11 +176,100 @@ You can add more tests in `tests/test_recommender.py`.
 
 ## Experiments You Tried
 
-Use this section to document the experiments you ran. For example:
+### Phase 4 Stress Test — 9 Profiles (5 normal + 4 adversarial)
 
-- What happened when you changed the weight on genre from 2.0 to 0.5
-- What happened when you added tempo or valence to the score
-- How did your system behave for different types of users
+All profiles were run against the 18-song catalog. Key observations:
+
+**Normal profiles — behaved as expected**
+
+| Profile | Top result | Score | Notes |
+|---|---|---|---|
+| Pop / Happy | Sunrise City | 5.38 | Genre + mood double match, near-perfect energy |
+| Study Session | Focus Flow | 6.44 | Near-max score; only lofi song with mood=focused |
+| Workout | Storm Runner | 5.39 | Only rock/intense song; clear winner |
+| Sunday Morning | Coffee Shop Stories | 6.44 | Only jazz/relaxed song; near-max |
+| Dance Floor | Signal Drop | 5.42 | Only EDM/euphoric song; perfect energy match |
+
+**Adversarial profiles — revealed system weaknesses**
+
+**Edge 1 — Unknown genre (`reggae`):**
+Genre bonus is permanently locked out (max possible score = 4.5). The system falls back to mood + energy. Result: two "happy" songs topped the list even though neither is remotely reggae. Shows the system has no way to say "no catalog match found" — it always recommends something.
+
+**Edge 2 — High-energy acoustic (`folk/intense/0.9`):**
+The only folk song (Porch Light) ranked #1 at 3.99 — but it has energy=0.32, far from the target of 0.9. Genre weight (2.0) + acoustic bonus (1.0) outweighed the energy penalty. Songs #2 and #3 (Gym Hero, Storm Runner) scored nearly as high by matching mood=intense and energy, but with no genre match. The system was "tricked" into recommending a quiet folk song as #1 for an intense listener.
+
+**Edge 3 — Dead-center energy (`synthwave/moody/0.5`):**
+Night Drive Loop still won cleanly (5.04) via genre + mood match. But positions #2–#5 were a confused cluster within 0.14 points of each other — country, R&B, lofi, lofi — with scores around 1.84–1.96. No song clusters near 0.5 energy, so the long tail is essentially random.
+
+**Edge 4 — Impossible mood (`lofi/romantic`):**
+No lofi song in the catalog has mood=romantic, so the mood bonus (+1.5) can never be collected. The top 3 results were all lofi songs winning purely on genre + energy + acoustic. Golden Hour (R&B/romantic) ranked #4 by collecting the mood bonus despite genre mismatch — scoring 3.20 vs the lofi songs at ~4.9. This shows the system heavily favors genre over mood, which can frustrate a user whose primary need is a specific emotional tone.
+
+```
+Catalog loaded: 18 songs
+
+============================================================
+  Profile : Edge: Unknown Genre
+  Genre   : reggae   Mood: happy
+  Energy  : 0.65   Acoustic: False
+============================================================
+
+  #1  Rooftop Lights by Indigo Parade
+       Score : 3.25 / 6.5  (max possible without genre match: 4.5)
+       Genre : indie pop  |  Mood: happy  |  Energy: 0.76
+       Why   :
+         - mood match - happy (+1.5)
+         - energy 0.76 vs target 0.65 -> closeness 0.89 (+1.33)
+         - valence 0.81 -> closeness 0.84 (+0.42)
+
+============================================================
+  Profile : Edge: High-Energy Acoustic
+  Genre   : folk   Mood: intense
+  Energy  : 0.9   Acoustic: True
+============================================================
+
+  #1  Porch Light by Elm & Ash   <- quiet folk song ranked #1 for "intense" listener
+       Score : 3.99 / 6.5
+       Genre : folk  |  Mood: melancholic  |  Energy: 0.32
+       Why   :
+         - genre match - folk (+2.0)
+         - energy 0.32 vs target 0.9 -> closeness 0.42 (+0.63)   <- heavy penalty
+         - acoustic match - acousticness 0.88 (+1.0)
+
+============================================================
+  Profile : Edge: Impossible Mood
+  Genre   : lofi   Mood: romantic
+  Energy  : 0.4   Acoustic: True
+============================================================
+
+  #1  Focus Flow by LoRoom   <- correct genre, wrong mood, still wins
+       Score : 4.97 / 6.5
+  #4  Golden Hour by Sienna Vale   <- has the right mood, wrong genre, ranks 4th
+       Score : 3.20 / 6.5
+       Why   : mood match - romantic (+1.5) but no genre bonus
+```
+
+### Phase 4 Step 3 — Weight Shift Experiment
+
+**Change applied:** genre weight halved (2.0 → 1.0), energy weight doubled (1.5 → 3.0). New max score: 7.0.
+
+**Before vs. after — key ranking changes:**
+
+| Profile | Original #1→#2 | Experimental #1→#2 | What changed |
+|---|---|---|---|
+| Pop / Happy | Sunrise City → **Gym Hero** | Sunrise City → **Rooftop Lights** | Rooftop Lights (indie pop/happy) jumped to #2; Gym Hero dropped to #3 |
+| High-Energy Acoustic | **Porch Light** → Gym Hero | **Storm Runner** → Gym Hero | Quiet folk song no longer wins; mood+energy beats genre |
+| Impossible Mood | Focus Flow → … → **Golden Hour #4** | Focus Flow → … → **Golden Hour #4** | Same structure; gap narrowed (5.47 vs 4.48 instead of 4.97 vs 3.20) |
+
+**Was the change more accurate or just different?**
+
+Mixed result — better in some places, worse in others:
+
+- **Better — Pop/Happy:** Rooftop Lights (indie pop/happy) now ranks #2 instead of Gym Hero (pop/intense). Musically, a happy indie pop song is a better recommendation for a "happy pop" user than an intense gym anthem. The fix worked.
+- **Better — High-Energy Acoustic:** Porch Light (a quiet, melancholic folk track) dropped from #1 to #3. Storm Runner and Gym Hero — both actually intense — now rank ahead of it. Energy's larger weight correctly penalized the energy mismatch.
+- **Worse — long tail noise:** With reduced genre weight, the #2–#5 slots in profiles like Dance Floor and Dead-Center Energy filled with random high-energy songs (Iron Veil, Sunrise City) that have no mood or genre match. Energy became so dominant it surfaced songs that were simply "close in BPM" regardless of feel.
+- **Unchanged weakness:** The fundamental problem (genre is an exact string match) was not fixed by reweighting. "Indie pop" still scores 0 for a "pop" user. The experiment revealed that the right fix is **genre similarity grouping**, not just lowering the genre weight.
+
+**Conclusion:** The original weights (genre 2.0, energy 1.5) were restored because the experiment created new problems while solving old ones. The most impactful improvement would be adding genre similarity groups (e.g., `pop` and `indie pop` share partial credit) rather than adjusting numeric weights.
 
 ---
 
@@ -200,14 +289,29 @@ You will go deeper on this in your model card.
 
 ## Reflection
 
-Read and complete `model_card.md`:
+[**Model Card**](model_card.md) | [**Profile Comparisons**](reflection.md)
 
-[**Model Card**](model_card.md)
+### Biggest learning moment
 
-Write 1 to 2 paragraphs here about what you learned:
+The biggest learning moment came during the adversarial testing phase, specifically the High-Energy Acoustic profile. I expected a user who wanted intense, high-energy folk music to receive energetic songs. Instead, the system ranked Porch Light — a quiet, melancholic song with energy 0.32 — as the top result. The math was not broken. Genre match (2.0) plus acoustic bonus (1.0) simply outweighed the energy penalty, fair and square by the formula's rules. That moment made something concrete that had been abstract: **a system can be mathematically correct and still wrong in a way that matters to a real person.** Every weight I assigned was a guess about what users value most, and when those guesses were wrong, the system failed confidently rather than cautiously.
 
-- about how recommenders turn data into predictions
-- about where bias or unfairness could show up in systems like this
+### How recommenders turn data into predictions
+
+Before building this, a music recommendation felt almost magical — the app just *knew* what I wanted. After building one, it looks like a loop that runs 18 times, adds up some numbers, and sorts a list. What creates the feeling of intelligence is not complexity but specificity: when the scores happen to align with what a person would have chosen themselves, the math feels like taste. When they do not align — like getting a gym track when you asked for happy pop — the illusion breaks. Real platforms like Spotify have millions of songs and behavioral signals (skips, replays, saves) that tighten the guesses over time. This simulation has 18 songs and no feedback loop, which makes the gaps obvious. That gap is instructive.
+
+### Where bias showed up
+
+Bias did not appear as a dramatic mistake. It appeared as a series of small, unconsidered choices. Setting the valence anchor at 0.65 felt like a neutral default, but it quietly penalizes dark-music listeners every time the formula runs. Using exact string matching for genre felt like the obvious implementation, but it makes "indie pop" invisible to a "pop" user. Putting 50% of songs above energy 0.7 felt like building a diverse catalog, but it structurally disadvantages mid-energy listeners who can never get a perfect energy score. None of these were intentional. They were the result of thinking about the average case and not asking who falls outside it. In a system used by real people at scale, those quiet penalties would accumulate into real unfairness — certain listeners consistently getting worse recommendations than others, for no reason they could see or contest.
+
+### Using AI tools — where they helped and where I checked
+
+AI tools were most useful for two things: generating the initial data (the 8 new songs added to `songs.csv`) and explaining tradeoffs between design options, like why `.sort()` is safer than `sorted()` for a list you own, or why energy closeness should reward proximity rather than magnitude. The output was trustworthy for these kinds of structured reasoning tasks.
+
+Where I needed to double-check: when AI suggested a scoring formula, I verified the math by computing a perfect-match case manually before using it. When AI explained that "genre weight might be too strong," I ran the weight-shift experiment rather than just changing the number — and discovered the suggestion was partially right but would create new problems it had not anticipated. The pattern was consistent: AI explanations were reliable as starting points and reliable for debugging, but experimental changes needed to be verified by running the actual code and reading the actual output.
+
+### What would come next
+
+The single highest-value extension would be replacing exact genre string matching with a genre similarity map — a small lookup table where "indie pop" and "pop" share partial credit, "rock" and "metal" share partial credit, and so on. This would fix the most frustrating failure mode without adding any new complexity to the scoring architecture. Second priority would be adding a `target_valence` field to `UserProfile` so listeners who prefer dark or melancholic music are no longer silently pushed toward brighter songs. Both changes would take about 15 minutes of code and would make the system feel meaningfully smarter for a much wider range of users.
 
 
 ---

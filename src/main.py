@@ -74,12 +74,59 @@ def main() -> None:
         "likes_acoustic": False,
     }
 
-    # Active profile — change this line to switch personas
-    active_profile = pop_happy
-    active_name = "Pop / Happy"
+    # --- Edge Case / Adversarial Profiles ---
 
-    results = recommend_songs(active_profile, songs, k=5)
-    print_recommendations(active_name, active_profile, results)
+    # Edge 1: Genre not in catalog — system can never award genre bonus
+    unknown_genre = {
+        "genre": "reggae",
+        "mood": "happy",
+        "target_energy": 0.65,
+        "likes_acoustic": False,
+    }
+
+    # Edge 2: Conflicting preferences — high energy but loves acoustic instruments
+    # (high-energy acoustic songs are rare; tests whether energy or acousticness wins)
+    high_energy_acoustic = {
+        "genre": "folk",
+        "mood": "intense",
+        "target_energy": 0.90,
+        "likes_acoustic": True,
+    }
+
+    # Edge 3: Dead-center energy (0.5) — no song clusters near the middle,
+    # so energy closeness never pays off fully for anyone
+    middle_energy = {
+        "genre": "synthwave",
+        "mood": "moody",
+        "target_energy": 0.50,
+        "likes_acoustic": False,
+    }
+
+    # Edge 4: Genre exists, but matching mood does not exist in catalog
+    # (lofi/romantic — no song has that combo; mood bonus is permanently locked out)
+    impossible_mood = {
+        "genre": "lofi",
+        "mood": "romantic",
+        "target_energy": 0.40,
+        "likes_acoustic": True,
+    }
+
+    # Run all profiles in sequence
+    all_profiles = [
+        ("Pop / Happy",            pop_happy),
+        ("Study Session",          study_session),
+        ("Workout",                workout),
+        ("Sunday Morning",         sunday_morning),
+        ("Dance Floor",            dance_floor),
+        ("Edge: Unknown Genre",    unknown_genre),
+        ("Edge: High-Energy Acoustic", high_energy_acoustic),
+        ("Edge: Dead-Center Energy",   middle_energy),
+        ("Edge: Impossible Mood",      impossible_mood),
+    ]
+
+    for name, profile in all_profiles:
+        results = recommend_songs(profile, songs, k=5)
+        print_recommendations(name, profile, results)
 
 
 if __name__ == "__main__":
