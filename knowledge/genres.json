@@ -1,0 +1,149 @@
+{
+  "pop": {
+    "description": "Commercial popular music with catchy melodies, polished production, and broad mainstream appeal.",
+    "typical_energy_range": [0.6, 0.9],
+    "typical_moods": ["happy", "uplifting", "energetic", "romantic"],
+    "similar_genres": ["indie pop", "r&b", "dance", "synthwave"],
+    "acoustic_common": false
+  },
+  "rock": {
+    "description": "Guitar-driven music ranging from classic rock to alternative. Emphasis on live instruments and raw energy.",
+    "typical_energy_range": [0.65, 0.95],
+    "typical_moods": ["intense", "energetic", "angry", "confident"],
+    "similar_genres": ["metal", "indie pop", "folk", "country"],
+    "acoustic_common": false
+  },
+  "lofi": {
+    "description": "Low-fidelity hip-hop influenced instrumental music. Warm, slightly imperfect sound ideal for studying or relaxing.",
+    "typical_energy_range": [0.2, 0.5],
+    "typical_moods": ["focused", "chill", "peaceful", "melancholic"],
+    "similar_genres": ["ambient", "jazz", "hip-hop", "classical"],
+    "acoustic_common": false
+  },
+  "jazz": {
+    "description": "Improvisational music rooted in blues and swing. Ranges from mellow background jazz to energetic bebop.",
+    "typical_energy_range": [0.3, 0.7],
+    "typical_moods": ["relaxed", "romantic", "nostalgic", "moody"],
+    "similar_genres": ["lofi", "classical", "r&b", "ambient"],
+    "acoustic_common": true
+  },
+  "edm": {
+    "description": "Electronic Dance Music. Synthesizer-driven, built for clubs and high-energy environments.",
+    "typical_energy_range": [0.8, 1.0],
+    "typical_moods": ["euphoric", "energetic", "uplifting", "intense"],
+    "similar_genres": ["synthwave", "pop", "hip-hop"],
+    "acoustic_common": false
+  },
+  "hip-hop": {
+    "description": "Urban music built around beats, rhythm, and rap vocals. Covers introspective to aggressive styles.",
+    "typical_energy_range": [0.55, 0.9],
+    "typical_moods": ["confident", "energetic", "moody", "uplifting"],
+    "similar_genres": ["r&b", "lofi", "pop", "funk"],
+    "acoustic_common": false
+  },
+  "r&b": {
+    "description": "Rhythm and blues. Soulful, melodic, and often romantic. Blends pop structure with gospel and funk roots.",
+    "typical_energy_range": [0.45, 0.8],
+    "typical_moods": ["romantic", "chill", "happy", "nostalgic"],
+    "similar_genres": ["pop", "jazz", "hip-hop", "soul"],
+    "acoustic_common": false
+  },
+  "classical": {
+    "description": "Orchestral and composed Western music. Wide range from quiet chamber pieces to dramatic symphonies.",
+    "typical_energy_range": [0.1, 0.6],
+    "typical_moods": ["peaceful", "focused", "melancholic", "uplifting"],
+    "similar_genres": ["ambient", "jazz", "folk"],
+    "acoustic_common": true
+  },
+  "country": {
+    "description": "American roots music blending folk, blues, and pop. Storytelling lyrics, acoustic and electric guitar.",
+    "typical_energy_range": [0.4, 0.8],
+    "typical_moods": ["nostalgic", "happy", "relaxed", "romantic"],
+    "similar_genres": ["folk", "rock", "r&b"],
+    "acoustic_common": true
+  },
+  "metal": {
+    "description": "High-distortion guitar music with aggressive drumming. Emphasizes intensity, power, and technical precision.",
+    "typical_energy_range": [0.85, 1.0],
+    "typical_moods": ["intense", "angry", "energetic", "confident"],
+    "similar_genres": ["rock", "edm"],
+    "acoustic_common": false
+  },
+  "funk": {
+    "description": "Groove-oriented music emphasizing rhythm, bass, and syncopation. Danceable and upbeat.",
+    "typical_energy_range": [0.65, 0.9],
+    "typical_moods": ["happy", "energetic", "uplifting", "confident"],
+    "similar_genres": ["r&b", "hip-hop", "pop"],
+    "acoustic_common": false
+  },
+  "folk": {
+    "description": "Acoustic, storytelling music rooted in traditional and roots music. Often introspective and organic.",
+    "typical_energy_range": [0.2, 0.55],
+    "typical_moods": ["nostalgic", "peaceful", "melancholic", "relaxed"],
+    "similar_genres": ["country", "classical", "indie pop", "rock"],
+    "acoustic_common": true
+  },
+  "ambient": {
+    "description": "Atmospheric, texture-focused music designed to set a mood rather than drive a beat. Very low energy.",
+    "typical_energy_range": [0.05, 0.35],
+    "typical_moods": ["peaceful", "focused", "melancholic", "chill"],
+    "similar_genres": ["classical", "lofi", "folk"],
+    "acoustic_common": false
+  },
+  "synthwave": {
+    "description": "Retro-futuristic electronic music inspired by 1980s film scores and video games. Moody and atmospheric.",
+    "typical_energy_range": [0.5, 0.85],
+    "typical_moods": ["moody", "nostalgic", "energetic", "intense"],
+    "similar_genres": ["edm", "pop", "ambient"],
+    "acoustic_common": false
+  },
+  "indie pop": {
+    "description": "Independent alternative pop music. Melodic with a more experimental or lo-fi edge than mainstream pop.",
+    "typical_energy_range": [0.5, 0.8],
+    "typical_moods": ["happy", "melancholic", "romantic", "uplifting"],
+    "similar_genres": ["pop", "folk", "rock"],
+    "acoustic_common": false
+  },
+  "reggae": {
+    "description": "Jamaican music with a distinctive offbeat rhythm. Relaxed tempo, often with social themes.",
+    "typical_energy_range": [0.4, 0.7],
+    "typical_moods": ["happy", "relaxed", "peaceful", "uplifting"],
+    "similar_genres": ["folk", "r&b", "pop"],
+    "acoustic_common": false
+  },
+  "soul": {
+    "description": "Emotionally expressive music descended from gospel and R&B. Emphasis on vocals and feeling.",
+    "typical_energy_range": [0.4, 0.8],
+    "typical_moods": ["romantic", "melancholic", "uplifting", "nostalgic"],
+    "similar_genres": ["r&b", "jazz", "pop"],
+    "acoustic_common": false
+  },
+  "electronic": {
+    "description": "Broad category of synthesizer-based music spanning dance, ambient, and experimental styles.",
+    "typical_energy_range": [0.5, 1.0],
+    "typical_moods": ["euphoric", "moody", "energetic", "focused"],
+    "similar_genres": ["edm", "synthwave", "ambient"],
+    "acoustic_common": false
+  },
+  "indie": {
+    "description": "Independent music produced outside major labels. Often guitar-based with an alternative sensibility.",
+    "typical_energy_range": [0.4, 0.8],
+    "typical_moods": ["melancholic", "uplifting", "moody", "happy"],
+    "similar_genres": ["indie pop", "folk", "rock"],
+    "acoustic_common": false
+  },
+  "classical guitar": {
+    "description": "Solo or small ensemble acoustic guitar compositions in the classical tradition.",
+    "typical_energy_range": [0.1, 0.45],
+    "typical_moods": ["peaceful", "romantic", "melancholic", "focused"],
+    "similar_genres": ["classical", "folk", "jazz"],
+    "acoustic_common": true
+  },
+  "blues": {
+    "description": "American roots music based on call-and-response vocals and guitar. Emotional and expressive.",
+    "typical_energy_range": [0.35, 0.75],
+    "typical_moods": ["melancholic", "relaxed", "intense", "nostalgic"],
+    "similar_genres": ["jazz", "rock", "r&b", "country"],
+    "acoustic_common": true
+  }
+}
