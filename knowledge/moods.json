@@ -1,0 +1,100 @@
+{
+  "angry": {
+    "description": "A high-intensity emotional state driven by frustration or aggression, best matched by music with raw power and confrontational energy.",
+    "typical_energy_range": [0.75, 1.0],
+    "typical_valence_range": [0.1, 0.4],
+    "compatible_genres": ["metal", "rock", "hip-hop", "punk"],
+    "critique_guidance": "Check that recommended songs have high energy (0.75+) and low valence (below 0.4); mellow or happy-sounding tracks are a mismatch for angry mood."
+  },
+  "chill": {
+    "description": "A laid-back, easygoing state that calls for relaxed and unhurried music without demanding attention.",
+    "typical_energy_range": [0.15, 0.5],
+    "typical_valence_range": [0.4, 0.7],
+    "compatible_genres": ["lofi", "ambient", "jazz", "r&b", "indie pop"],
+    "critique_guidance": "Verify that songs are low-to-mid energy (below 0.5) and carry a mildly positive valence; overly intense or sad tracks undermine the chill atmosphere."
+  },
+  "confident": {
+    "description": "A self-assured, empowered state that pairs well with music that feels bold, polished, and assertive.",
+    "typical_energy_range": [0.55, 0.85],
+    "typical_valence_range": [0.6, 0.9],
+    "compatible_genres": ["hip-hop", "pop", "r&b", "funk", "rock"],
+    "critique_guidance": "Ensure tracks carry moderate-to-high energy and a clearly positive valence; low-energy or melancholic songs conflict with the confident mood profile."
+  },
+  "euphoric": {
+    "description": "An intensely joyful, almost overwhelming state of elation best supported by high-energy, bright-sounding music.",
+    "typical_energy_range": [0.8, 1.0],
+    "typical_valence_range": [0.75, 1.0],
+    "compatible_genres": ["edm", "pop", "synthwave", "indie pop"],
+    "critique_guidance": "Both energy and valence should be very high (0.8+); anything low-energy or emotionally ambiguous is a poor fit for euphoric mood."
+  },
+  "focused": {
+    "description": "A state of deep concentration that benefits from music that is steady and unobtrusive without being distracting.",
+    "typical_energy_range": [0.2, 0.5],
+    "typical_valence_range": [0.3, 0.65],
+    "compatible_genres": ["lofi", "ambient", "classical", "jazz"],
+    "critique_guidance": "Look for low-to-mid energy tracks with neutral or slightly positive valence; high-energy or emotionally charged songs will break concentration."
+  },
+  "happy": {
+    "description": "A bright, cheerful emotional state that is best complemented by upbeat, feel-good music with positive energy.",
+    "typical_energy_range": [0.5, 0.85],
+    "typical_valence_range": [0.7, 1.0],
+    "compatible_genres": ["pop", "funk", "indie pop", "country", "r&b"],
+    "critique_guidance": "Songs should have clearly positive valence (0.7+) and moderate-to-high energy; dark or slow tracks are a mismatch for happy mood."
+  },
+  "intense": {
+    "description": "A state of heightened focus and emotional pressure that demands music with high energy and dramatic impact.",
+    "typical_energy_range": [0.75, 1.0],
+    "typical_valence_range": [0.4, 0.8],
+    "compatible_genres": ["metal", "rock", "edm", "hip-hop", "synthwave"],
+    "critique_guidance": "Energy must be very high (0.75+); valence can range widely but tracks that feel passive or quiet contradict the intense mood profile."
+  },
+  "melancholic": {
+    "description": "A reflective, sorrowful state that resonates with music expressing sadness, longing, or quiet introspection.",
+    "typical_energy_range": [0.1, 0.5],
+    "typical_valence_range": [0.1, 0.45],
+    "compatible_genres": ["classical", "folk", "indie pop", "ambient", "jazz"],
+    "critique_guidance": "Both energy and valence should be low; upbeat or high-energy tracks feel jarring and inappropriate for a melancholic mood."
+  },
+  "moody": {
+    "description": "An emotionally complex, brooding state that suits music with shifting dynamics and an introspective quality.",
+    "typical_energy_range": [0.35, 0.7],
+    "typical_valence_range": [0.2, 0.55],
+    "compatible_genres": ["indie pop", "rock", "r&b", "jazz", "lofi"],
+    "critique_guidance": "Mid-range energy and below-average valence are the target; overly cheerful or extremely aggressive tracks both miss the nuanced moody profile."
+  },
+  "nostalgic": {
+    "description": "A bittersweet longing for the past that is well served by warm, familiar-sounding music with emotional depth.",
+    "typical_energy_range": [0.3, 0.65],
+    "typical_valence_range": [0.45, 0.75],
+    "compatible_genres": ["folk", "country", "pop", "r&b", "indie pop"],
+    "critique_guidance": "Tracks should sit in a moderate energy and mid-positive valence range; overly aggressive or clinically modern production undercuts the nostalgic feel."
+  },
+  "peaceful": {
+    "description": "A calm, serene state of inner stillness that pairs naturally with gentle, unhurried music that soothes rather than stimulates.",
+    "typical_energy_range": [0.1, 0.4],
+    "typical_valence_range": [0.5, 0.8],
+    "compatible_genres": ["ambient", "classical", "folk", "lofi", "jazz"],
+    "critique_guidance": "Energy must stay low (below 0.4) while valence should be gently positive; anything loud, harsh, or emotionally heavy disrupts the peaceful mood."
+  },
+  "relaxed": {
+    "description": "A comfortable, at-ease state that benefits from music that is smooth and flowing without demanding active listening.",
+    "typical_energy_range": [0.15, 0.45],
+    "typical_valence_range": [0.4, 0.75],
+    "compatible_genres": ["lofi", "jazz", "ambient", "r&b", "folk"],
+    "critique_guidance": "Songs should be low energy and carry a neutral-to-positive valence; high-energy or emotionally intense tracks conflict with a relaxed listening state."
+  },
+  "romantic": {
+    "description": "An emotionally intimate, tender state that calls for music evoking warmth, closeness, and heartfelt feeling.",
+    "typical_energy_range": [0.2, 0.6],
+    "typical_valence_range": [0.55, 0.85],
+    "compatible_genres": ["jazz", "r&b", "pop", "classical", "indie pop"],
+    "critique_guidance": "Tracks should feel warm and emotionally expressive with moderate-positive valence; cold electronic textures or aggressive energy undermine the romantic mood."
+  },
+  "uplifting": {
+    "description": "An inspiring, motivating state that is amplified by music that feels hopeful, energetic, and emotionally expansive.",
+    "typical_energy_range": [0.55, 0.9],
+    "typical_valence_range": [0.65, 1.0],
+    "compatible_genres": ["pop", "edm", "indie pop", "synthwave", "funk"],
+    "critique_guidance": "Both energy and valence should be above average; low-energy or emotionally negative tracks directly oppose the uplifting character of this mood."
+  }
+}

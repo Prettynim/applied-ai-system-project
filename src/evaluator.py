@@ -14,18 +14,20 @@ Usage:
     python -m src.evaluator
 """
 
-import os
-import sys
-from dataclasses import dataclass
-from typing import List, Dict, Callable, Tuple
+import os      # os.path for resolving the songs.csv path
+import sys     # sys.path manipulation for the dual-import pattern
+from dataclasses import dataclass           # lightweight data containers for test results
+from typing import List, Dict, Callable, Tuple   # type hints for test functions and results
 
+# Dual import path: works both as `python -m src.evaluator` and `python evaluator.py`
 try:
-    from recommender import load_songs, recommend_songs
-    from guardrails import run_guardrails, Severity, GuardrailIssue
+    from recommender import load_songs, recommend_songs        # rule-based scoring engine
+    from guardrails import run_guardrails, Severity, GuardrailIssue  # pre-flight checks
 except ImportError:
     from src.recommender import load_songs, recommend_songs
     from src.guardrails import run_guardrails, Severity, GuardrailIssue
 
+# Resolve songs.csv relative to this file — same pattern as agent.py and rag.py
 _SONGS_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "songs.csv")
 
 
@@ -33,74 +35,90 @@ _SONGS_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "songs.csv")
 # Data structures
 # ---------------------------------------------------------------------------
 
+# CheckFn is the type of a single pass/fail check function.
+# It receives the recommendation results and guardrail issues, returns (passed, message).
 CheckFn = Callable[[List, List[GuardrailIssue]], Tuple[bool, str]]
 
 
 @dataclass
 class TestCase:
-    name: str
-    profile: Dict
-    description: str
-    checks: List[CheckFn]
+    """One predefined test case: a profile, a description, and a list of checks to run."""
+    name: str              # short identifier shown in the report (e.g., "T01 - Pop / Happy")
+    profile: Dict          # user preference dict passed to the scoring engine
+    description: str       # explains what this test is verifying and why it matters
+    checks: List[CheckFn]  # list of check functions — ALL must pass for the case to pass
 
 
 @dataclass
 class CheckOutcome:
-    check_name: str
-    passed: bool
-    message: str
+    """Result of running a single check function within a test case."""
+    check_name: str   # function's __name__ attribute — used in the report
+    passed: bool      # True if the check returned True
+    message: str      # human-readable detail from the check function
 
 
 @dataclass
 class CaseResult:
+    """Aggregated result for one complete test case (all checks run)."""
     name: str
     description: str
-    passed: bool
+    passed: bool              # True only if ALL checks passed
     outcomes: List[CheckOutcome]
-    top_title: str
-    top_score: float
-    confidence: float
-    guardrail_count: int
+    top_title: str            # title of the #1 recommended song
+    top_score: float          # raw score of the #1 result (out of 6.5)
+    confidence: float         # top_score normalized to 0.0–1.0
+    guardrail_count: int      # number of guardrail issues raised for this profile
 
 
 @dataclass
 class EvaluationReport:
+    """Summary of the entire test run — printed at the end of the report."""
     total_tests: int
     passed_tests: int
     failed_tests: int
-    reliability_score: float
+    reliability_score: float   # passed_tests / total_tests, rounded to 3 decimal places
     results: List[CaseResult]
 
 
 # ---------------------------------------------------------------------------
-# Confidence scoring (rule-based, no API needed)
+# Confidence scoring
 # ---------------------------------------------------------------------------
 
 def confidence_score(score: float, max_score: float = 6.5) -> float:
-    """Normalizes a raw recommendation score to a 0.0-1.0 confidence value."""
+    """
+    Normalizes a raw recommendation score to a 0.0–1.0 confidence value.
+    max() and min() clamp the result to [0, 1] in case of floating-point edge cases.
+    Used to give a percentage "how well did the system serve this profile?" metric.
+    """
     return round(min(max(score / max_score, 0.0), 1.0), 3)
 
 
 # ---------------------------------------------------------------------------
-# Check factories
+# Check factory functions
 # ---------------------------------------------------------------------------
 
 def check_top1_genre(expected_genre: str) -> CheckFn:
-    """Top recommendation must match the given genre."""
+    """
+    Returns a check function that passes only if the #1 recommendation matches expected_genre.
+    The genre field of the top song is compared as an exact string.
+    """
     def _check(results, issues):
         if not results:
             return False, "No results returned"
-        actual = results[0][0]["genre"]
+        actual = results[0][0]["genre"]           # results[0] = top song tuple; [0] = song dict; ["genre"] = genre
         passed = actual == expected_genre
         return passed, f"top-1 genre={actual!r} (expected {expected_genre!r})"
-    _check.__name__ = f"top1_genre_is_{expected_genre}"
+    _check.__name__ = f"top1_genre_is_{expected_genre}"   # used in the report output
     return _check
 
 
 def check_guardrail_fires(code: str) -> CheckFn:
-    """A guardrail with the given code must appear in the issue list."""
+    """
+    Returns a check function that passes only if a guardrail with the given code
+    appears in the issues list. Used to verify that edge cases trigger the expected warnings.
+    """
     def _check(results, issues):
-        found = [i.code for i in issues]
+        found = [i.code for i in issues]   # extract all issue codes as a list
         passed = code in found
         return passed, f"expected guardrail {code!r}, found: {found}"
     _check.__name__ = f"guardrail_{code}_fires"
@@ -108,16 +126,19 @@ def check_guardrail_fires(code: str) -> CheckFn:
 
 
 def check_no_errors(results, issues) -> Tuple[bool, str]:
-    """No ERROR-severity guardrails must be raised."""
+    """
+    Standalone check (not a factory) — passes only if no ERROR-severity guardrails were raised.
+    WARNING and INFO issues are acceptable; ERROR means invalid input reached the engine.
+    """
     errors = [i.code for i in issues if i.severity == Severity.ERROR]
     return len(errors) == 0, f"error guardrails: {errors}"
 
-
+# Assign a readable __name__ so it shows correctly in the report
 check_no_errors.__name__ = "no_error_guardrails"
 
 
 def check_result_count(k: int) -> CheckFn:
-    """Exactly k results must be returned."""
+    """Returns a check function that passes only if exactly k results were returned."""
     def _check(results, issues):
         passed = len(results) == k
         return passed, f"expected {k} results, got {len(results)}"
@@ -126,11 +147,14 @@ def check_result_count(k: int) -> CheckFn:
 
 
 def check_top_score_above(threshold: float) -> CheckFn:
-    """Top result score must exceed the given threshold."""
+    """
+    Returns a check function that passes only if the top result's score >= threshold.
+    Used to verify that clear profiles produce strong matches (guards against score regression).
+    """
     def _check(results, issues):
         if not results:
             return False, "No results"
-        score = results[0][1]
+        score = results[0][1]    # results[0] = top song tuple; [1] = score float
         passed = score >= threshold
         return passed, f"top score={score:.2f} (required >= {threshold})"
     _check.__name__ = f"top_score_above_{threshold}"
@@ -138,10 +162,13 @@ def check_top_score_above(threshold: float) -> CheckFn:
 
 
 def check_top_score_below(threshold: float) -> CheckFn:
-    """Top result score must be below threshold (detects inflated scores on bad profiles)."""
+    """
+    Returns a check function that passes only if the top result's score < threshold.
+    Used to detect inflated scores on adversarial profiles and enforce the 6.5-point max.
+    """
     def _check(results, issues):
         if not results:
-            return True, "No results"
+            return True, "No results"   # no results can't have an inflated score
         score = results[0][1]
         passed = score < threshold
         return passed, f"top score={score:.2f} (required < {threshold})"
@@ -150,7 +177,7 @@ def check_top_score_below(threshold: float) -> CheckFn:
 
 
 # ---------------------------------------------------------------------------
-# Test suite definition
+# Test suite definition (T01–T08)
 # ---------------------------------------------------------------------------
 
 def build_test_suite() -> List[TestCase]:
@@ -168,10 +195,10 @@ def build_test_suite() -> List[TestCase]:
             profile={"genre": "pop", "mood": "happy", "target_energy": 0.8, "likes_acoustic": False},
             description="Clear pop profile. Catalog has 2 pop songs; #1 should be pop.",
             checks=[
-                check_top1_genre("pop"),
-                check_no_errors,
-                check_result_count(5),
-                check_top_score_above(3.5),
+                check_top1_genre("pop"),      # top result must be a pop song
+                check_no_errors,              # no invalid input errors
+                check_result_count(5),        # must return exactly 5 results
+                check_top_score_above(3.5),   # pop+happy+energy match should score well
             ],
         ),
         TestCase(
@@ -182,7 +209,7 @@ def build_test_suite() -> List[TestCase]:
                 check_top1_genre("lofi"),
                 check_no_errors,
                 check_result_count(5),
-                check_top_score_above(4.0),
+                check_top_score_above(4.0),   # lofi+focused+acoustic earns 4 out of the possible 6.5
             ],
         ),
         TestCase(
@@ -193,7 +220,7 @@ def build_test_suite() -> List[TestCase]:
                 check_top1_genre("rock"),
                 check_no_errors,
                 check_result_count(5),
-                check_top_score_above(3.0),
+                check_top_score_above(3.0),   # lower threshold because catalog has only 1 rock song
             ],
         ),
         TestCase(
@@ -204,9 +231,9 @@ def build_test_suite() -> List[TestCase]:
                 "No results should still be returned (graceful degradation)."
             ),
             checks=[
-                check_guardrail_fires("GENRE_NOT_IN_CATALOG"),
-                check_no_errors,
-                check_result_count(5),
+                check_guardrail_fires("GENRE_NOT_IN_CATALOG"),  # guardrail must detect the gap
+                check_no_errors,                                  # gap is a WARNING, not an ERROR
+                check_result_count(5),                            # system must still return 5 results
             ],
         ),
         TestCase(
@@ -217,8 +244,8 @@ def build_test_suite() -> List[TestCase]:
                 "Genre match should still surface lofi songs in results."
             ),
             checks=[
-                check_guardrail_fires("MOOD_NOT_IN_CATALOG"),
-                check_top1_genre("lofi"),
+                check_guardrail_fires("MOOD_NOT_IN_CATALOG"),  # mood gap must be detected
+                check_top1_genre("lofi"),    # genre bonus still works even without mood bonus
                 check_result_count(5),
             ],
         ),
@@ -231,9 +258,10 @@ def build_test_suite() -> List[TestCase]:
                 "Documented failure mode: quiet folk song may rank #1 despite energy mismatch."
             ),
             checks=[
-                check_guardrail_fires("HIGH_ENERGY_ACOUSTIC_CONFLICT"),
-                check_no_errors,
+                check_guardrail_fires("HIGH_ENERGY_ACOUSTIC_CONFLICT"),  # contradiction must be detected
+                check_no_errors,    # contradiction is a WARNING, not an ERROR
                 check_result_count(5),
+                # NOTE: no top1_genre check here — the energy mismatch means #1 may not be folk
             ],
         ),
         TestCase(
@@ -246,8 +274,8 @@ def build_test_suite() -> List[TestCase]:
             checks=[
                 check_no_errors,
                 check_result_count(5),
-                check_top_score_above(2.0),
-                check_top_score_below(6.0),
+                check_top_score_above(2.0),   # genre+mood match should still produce a reasonable score
+                check_top_score_below(6.0),   # energy gap means top score can't be near-perfect
             ],
         ),
         TestCase(
@@ -262,14 +290,14 @@ def build_test_suite() -> List[TestCase]:
                 check_no_errors,
                 check_result_count(5),
                 check_top_score_above(3.0),
-                check_top_score_below(6.6),
+                check_top_score_below(6.6),   # 6.6 > 6.5 max — catches any floating-point overflow
             ],
         ),
     ]
 
 
 # ---------------------------------------------------------------------------
-# Runner
+# Test runner
 # ---------------------------------------------------------------------------
 
 def run_test_suite(songs: List[Dict], k: int = 5) -> EvaluationReport:
@@ -278,23 +306,28 @@ def run_test_suite(songs: List[Dict], k: int = 5) -> EvaluationReport:
 
     Also appends a determinism test (T09) that verifies the rule engine
     produces identical rankings when called twice with the same input.
+    Determinism is a separate concern from correctness — it tests that
+    the engine has no hidden state or randomness.
     """
     test_cases = build_test_suite()
     results: List[CaseResult] = []
     passed_count = 0
 
     for tc in test_cases:
+        # Run guardrails and recommendation engine for each test case
         issues = run_guardrails(tc.profile, songs)
         recommendations = recommend_songs(tc.profile, songs, k=k)
 
+        # Run every check function in this test case
         outcomes: List[CheckOutcome] = []
-        test_passed = True
+        test_passed = True   # will be set to False if any check fails
         for fn in tc.checks:
             ok, msg = fn(recommendations, issues)
             outcomes.append(CheckOutcome(check_name=fn.__name__, passed=ok, message=msg))
             if not ok:
-                test_passed = False
+                test_passed = False   # any single failure marks the whole case as FAIL
 
+        # Extract top result metadata for the report
         top_score = recommendations[0][1] if recommendations else 0.0
         top_title = recommendations[0][0]["title"] if recommendations else "N/A"
 
@@ -305,17 +338,20 @@ def run_test_suite(songs: List[Dict], k: int = 5) -> EvaluationReport:
             outcomes=outcomes,
             top_title=top_title,
             top_score=top_score,
-            confidence=confidence_score(top_score),
+            confidence=confidence_score(top_score),   # normalized 0–1 confidence
             guardrail_count=len(issues),
         ))
         if test_passed:
             passed_count += 1
 
-    # --- T09: Determinism ---
+    # --- T09: Determinism check ---
+    # Runs the same profile twice and compares the ordered title lists.
+    # The rule engine is deterministic by design (no randomness, no state),
+    # so this should always pass — failure would indicate a bug in the engine.
     ref_profile = {"genre": "jazz", "mood": "relaxed", "target_energy": 0.35, "likes_acoustic": True}
-    run1 = [r[0]["title"] for r in recommend_songs(ref_profile, songs, k=k)]
-    run2 = [r[0]["title"] for r in recommend_songs(ref_profile, songs, k=k)]
-    det_passed = run1 == run2
+    run1 = [r[0]["title"] for r in recommend_songs(ref_profile, songs, k=k)]   # first run
+    run2 = [r[0]["title"] for r in recommend_songs(ref_profile, songs, k=k)]   # second run (same input)
+    det_passed = run1 == run2   # must be identical in the same order
     det_msg = "identical" if det_passed else f"run1={run1} run2={run2}"
 
     results.append(CaseResult(
@@ -327,19 +363,19 @@ def run_test_suite(songs: List[Dict], k: int = 5) -> EvaluationReport:
         passed=det_passed,
         outcomes=[CheckOutcome("same_output_on_repeat_call", det_passed, det_msg)],
         top_title=run1[0] if run1 else "N/A",
-        top_score=0.0,
+        top_score=0.0,      # not meaningful for a determinism check — always shown as 0
         confidence=0.0,
         guardrail_count=0,
     ))
     if det_passed:
         passed_count += 1
 
-    total = len(results)
+    total = len(results)   # T01–T09
     return EvaluationReport(
         total_tests=total,
         passed_tests=passed_count,
         failed_tests=total - passed_count,
-        reliability_score=round(passed_count / total, 3),
+        reliability_score=round(passed_count / total, 3),   # percentage as a decimal, 3dp
         results=results,
     )
 
@@ -363,6 +399,7 @@ def print_report(report: EvaluationReport) -> None:
         print(f"\n  [{status}] {result.name}")
         print(f"         {result.description}")
         if result.top_score > 0:
+            # Show top result with score and normalized confidence percentage
             print(
                 f"         Top result : {result.top_title!r} "
                 f"(score={result.top_score:.2f}/6.5, confidence={result.confidence:.0%})"
@@ -370,13 +407,14 @@ def print_report(report: EvaluationReport) -> None:
         if result.guardrail_count > 0:
             print(f"         Guardrails : {result.guardrail_count} issue(s) raised")
         for outcome in result.outcomes:
-            tick = "ok" if outcome.passed else "!!"
+            tick = "ok" if outcome.passed else "!!"   # visual pass/fail indicator
             print(f"         [{tick}] {outcome.check_name}: {outcome.message}")
 
     print(f"\n{thin}")
     print(f"  Results           : {report.passed_tests}/{report.total_tests} passed")
     print(f"  Reliability score : {report.reliability_score:.0%}")
 
+    # Letter grade thresholds — defined informally for this project
     if report.reliability_score >= 0.9:
         grade = "EXCELLENT"
     elif report.reliability_score >= 0.75:
@@ -395,10 +433,10 @@ def print_report(report: EvaluationReport) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    songs = load_songs(_SONGS_PATH)
+    songs = load_songs(_SONGS_PATH)         # load catalog from data/songs.csv
     print(f"Catalog loaded: {len(songs)} songs")
-    report = run_test_suite(songs)
-    print_report(report)
+    report = run_test_suite(songs)          # run all 9 test cases
+    print_report(report)                    # print formatted results to stdout
 
 
 if __name__ == "__main__":

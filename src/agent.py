@@ -1,24 +1,30 @@
 """
-AI-powered agentic layer for the Music Recommender.
+AI-powered agentic layer for the Music Recommender (VibeFinder).
 
 Pipeline (4 steps):
-  1. RAG-grounded NL parsing
-     Claude reads a free-text request and maps it to a structured UserProfile.
-     A catalog genre overview is RETRIEVED from the knowledge base and injected
-     into the system prompt so Claude's genre selection is grounded in what
-     actually exists in the catalog.
+  1. Dual-RAG-grounded NL parsing
+     Claude reads a free-text request and maps it to a structured UserProfile
+     (Pydantic, structured output via messages.parse). A catalog genre overview
+     is RETRIEVED from knowledge/genres.json and injected into the system prompt
+     with few-shot calibration examples so Claude's genre mapping is grounded
+     in what actually exists in the catalog.
 
   2. Guardrails
-     The parsed profile is checked for known failure modes before any
-     recommendation is computed (energy range, genre gaps, contradictions).
+     The parsed profile is checked for 5 known failure modes before any
+     recommendation is computed (ENERGY_OUT_OF_RANGE, GENRE_NOT_IN_CATALOG,
+     MOOD_NOT_IN_CATALOG, HIGH_ENERGY_ACOUSTIC_CONFLICT, THIN_GENRE_COVERAGE).
 
-  3. Rule-based recommendation engine
-     The existing weighted scoring engine ranks all 18 songs.
+  3. Agentic tool call — get_song_recommendations
+     Claude receives the profile + dual-RAG context (genre + mood knowledge)
+     and issues a structured tool call. The tool call parameters are logged
+     as an observable intermediate step. The rule-based scoring engine executes
+     the call deterministically and returns the top-k ranked songs.
 
-  4. RAG-grounded self-critique
-     The genre profile for the TOP recommended song is RETRIEVED from the
-     knowledge base and given to Claude. Claude compares actual results
-     against expected genre characteristics and writes a structured critique.
+  4. Streaming RAG-grounded critique
+     The tool result is fed back to Claude via a second API call (messages.stream).
+     Claude writes a streaming critique grounded in both the genre profile
+     (knowledge/genres.json) and mood profile (knowledge/moods.json),
+     identifying any energy/valence mismatches against expected ranges.
 
 All steps are logged to logs/sessions.log via the session logger.
 
@@ -27,24 +33,29 @@ Usage:
     python -m src.agent "I want something energetic for my morning run"
 """
 
-import os
-import sys
-import logging
-from typing import Optional, List, Dict
-from pydantic import BaseModel, Field
-import anthropic
+import os          # os.path for data file paths; os.environ for API key
+import sys         # sys.argv to accept optional CLI argument
+import logging     # standard library logger, wrapped by src/logger.py
+from typing import Optional, List, Dict   # type hints for all function signatures
+from pydantic import BaseModel, Field     # structured output schema + field-level validators
+import anthropic   # Anthropic Python SDK — messages.parse, messages.create, messages.stream
 
+# Dual import path: supports both `python -m src.agent` (package mode)
+# and direct execution from the src/ directory (`python agent.py`)
 try:
-    from recommender import load_songs, recommend_songs
-    from guardrails import run_guardrails, format_issues, GuardrailIssue, Severity
+    from recommender import load_songs, recommend_songs          # rule-based scoring engine
+    from guardrails import run_guardrails, format_issues, GuardrailIssue, Severity  # pre-flight checks
     from rag import (
-        load_knowledge_base,
-        format_catalog_overview,
-        format_genre_context,
-        find_closest_catalog_genre,
+        load_knowledge_base,         # loads knowledge/genres.json into a dict
+        format_catalog_overview,     # builds genre table for NL parsing prompt (RAG retrieval ①)
+        format_genre_context,        # formats single genre profile for critique prompt (RAG retrieval ②)
+        find_closest_catalog_genre,  # RAG fallback: maps off-catalog genre to nearest catalog genre
+        load_mood_knowledge_base,    # loads knowledge/moods.json into a dict
+        format_mood_context,         # formats single mood profile for critique prompt (RAG retrieval ③)
     )
-    from logger import get_logger, new_session_id
+    from logger import get_logger, new_session_id  # session-scoped logger + UUID generator
 except ImportError:
+    # Package-relative imports used when running as `python -m src.agent`
     from src.recommender import load_songs, recommend_songs
     from src.guardrails import run_guardrails, format_issues, GuardrailIssue, Severity
     from src.rag import (
@@ -52,9 +63,12 @@ except ImportError:
         format_catalog_overview,
         format_genre_context,
         find_closest_catalog_genre,
+        load_mood_knowledge_base,
+        format_mood_context,
     )
     from src.logger import get_logger, new_session_id
 
+# Absolute path to the song catalog CSV, resolved relative to this file's location
 _SONGS_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "songs.csv")
 
 
@@ -63,7 +77,11 @@ _SONGS_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "songs.csv")
 # ---------------------------------------------------------------------------
 
 class ProfileExtraction(BaseModel):
-    """Music taste profile extracted from natural language."""
+    """
+    Schema that Claude must populate when called with messages.parse().
+    Pydantic enforces field types and ge/le constraints before the value
+    ever reaches the rest of the pipeline.
+    """
 
     favorite_genre: str = Field(
         description=(
@@ -71,6 +89,8 @@ class ProfileExtraction(BaseModel):
             "You MUST pick from that list. If the user's genre is not available, "
             "choose the closest catalog match based on the energy and mood profiles shown."
         )
+        # No enum constraint here — Claude picks from the RAG-injected list at runtime,
+        # so the valid set varies with the catalog rather than being hardcoded
     )
     favorite_mood: str = Field(
         description=(
@@ -85,8 +105,8 @@ class ProfileExtraction(BaseModel):
             "Use the energy ranges in the genre overview as a guide. "
             "Guidelines: sleep=0.1-0.2, study=0.25-0.45, casual=0.45-0.65, workout/dance=0.7-1.0."
         ),
-        ge=0.0,
-        le=1.0,
+        ge=0.0,   # Pydantic min validator — prevents energy < 0 reaching the scoring engine
+        le=1.0,   # Pydantic max validator — prevents energy > 1 reaching the scoring engine
     )
     likes_acoustic: bool = Field(
         description=(
@@ -102,16 +122,42 @@ class ProfileExtraction(BaseModel):
             "0.4-0.7 = vague or short. "
             "0.1-0.4 = contradictory or ambiguous."
         ),
-        ge=0.0,
-        le=1.0,
+        ge=0.0,  # confidence cannot be negative
+        le=1.0,  # confidence cannot exceed 100%
     )
     extraction_notes: Optional[str] = Field(
-        default=None,
+        default=None,   # null for clear requests — only populated when assumptions were made
         description=(
             "Brief note on ambiguities, assumptions, or genre remapping performed. "
             "Required if requested genre is not in catalog. Null if request was clear."
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Few-shot examples for NL parsing specialization (Step 1)
+# ---------------------------------------------------------------------------
+
+# These four examples calibrate Claude's confidence scoring and genre-remapping behavior.
+# Without them, Claude may assign 0.8+ confidence to vague inputs or silently remap
+# off-catalog genres without noting it. The examples anchor the expected output format.
+_FEW_SHOT_EXAMPLES = """
+FEW-SHOT CALIBRATION EXAMPLES (follow this confidence and remapping pattern):
+
+  Request: "I want lofi beats for deep focus, acoustic vibes"
+  → genre=lofi  mood=focused  energy=0.35  acoustic=True  confidence=0.90  notes=null
+
+  Request: "Something upbeat and danceable, I'm going out tonight"
+  → genre=edm   mood=euphoric  energy=0.90  acoustic=False  confidence=0.85  notes=null
+
+  Request: "Something nice for the background, not sure really"
+  → genre=ambient  mood=relaxed  energy=0.30  acoustic=False  confidence=0.35
+    notes="Very vague request. Defaulted to ambient/relaxed as most neutral background profile."
+
+  Request: "I love reggae, upbeat feel-good vibes"
+  → genre=r&b  mood=happy  energy=0.65  acoustic=False  confidence=0.62
+    notes="Reggae not in catalog. Mapped to r&b based on similar groove and positive energy profile."
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +167,7 @@ class ProfileExtraction(BaseModel):
 def parse_natural_language(
     user_text: str,
     client: anthropic.Anthropic,
-    catalog_overview: str,
+    catalog_overview: str,   # pre-retrieved genre table from knowledge/genres.json
     log: logging.Logger,
 ) -> ProfileExtraction:
     """
@@ -134,10 +180,13 @@ def parse_natural_language(
     log.info("Step 1: Calling Claude API for NL parsing (RAG-grounded)")
     log.debug("User text: %s", user_text)
 
+    # Build system prompt by concatenating: role instructions + RAG context + few-shot examples
+    # Order matters: RAG context comes before the few-shot examples so Claude sees
+    # what genres are available before it sees the calibration examples
     system_prompt = (
         "You are a music taste analyst. Extract structured music preferences "
         "from a user's natural language request.\n\n"
-        + catalog_overview
+        + catalog_overview          # RAG retrieval ①: genre table injected here
         + "\n\n"
         "Rules:\n"
         "- favorite_genre MUST be one of the genres listed above.\n"
@@ -146,20 +195,26 @@ def parse_natural_language(
         "- Be conservative with defaults: if energy is not mentioned, use the "
         "midpoint of the closest genre's typical range.\n"
         "- likes_acoustic defaults to False unless explicitly implied."
+        + "\n\n"
+        + _FEW_SHOT_EXAMPLES        # specialization: 4 calibration examples anchoring confidence scores
     )
 
     try:
+        # messages.parse() returns a strongly-typed ProfileExtraction object.
+        # The SDK validates that Claude's JSON output matches the Pydantic schema
+        # before returning — no manual parsing needed.
         response = client.messages.parse(
-            model="claude-opus-4-6",
-            max_tokens=1024,
+            model="claude-opus-4-6",   # latest Claude model — best instruction-following
+            max_tokens=1024,           # generous budget: schema + notes fit in ~200 tokens; 1024 is safe
             system=system_prompt,
             messages=[{
                 "role": "user",
                 "content": f'Extract music preferences from this request:\n\n"{user_text}"',
             }],
-            output_format=ProfileExtraction,
+            output_format=ProfileExtraction,   # structured output: SDK enforces the Pydantic schema
         )
-        extraction = response.parsed_output
+        extraction = response.parsed_output   # type: ProfileExtraction — fully validated object
+
         log.info(
             "Parsed: genre=%s mood=%s energy=%.2f acoustic=%s confidence=%.0f%%",
             extraction.favorite_genre,
@@ -174,11 +229,11 @@ def parse_natural_language(
 
     except anthropic.APIError as e:
         log.error("Claude API error during NL parsing: %s", e)
-        raise
+        raise   # propagate to caller — session handler catches and exits gracefully
 
 
 # ---------------------------------------------------------------------------
-# Step 4: RAG-grounded self-critique
+# Step 4 (legacy): RAG-grounded self-critique
 # ---------------------------------------------------------------------------
 
 def self_critique(
@@ -186,7 +241,7 @@ def self_critique(
     profile: Dict,
     recommendations: List,
     guardrail_issues: List[GuardrailIssue],
-    genre_context: str,
+    genre_context: str,   # pre-retrieved genre profile from knowledge/genres.json
     client: anthropic.Anthropic,
     log: logging.Logger,
 ) -> str:
@@ -197,9 +252,14 @@ def self_critique(
     genre) is injected into the prompt. Claude compares actual results against
     the retrieved expected characteristics (energy range, typical moods) and
     flags mismatches that the rule engine cannot detect on its own.
+
+    NOTE: This function is preserved for reference but is superseded by
+    run_agentic_recommendation_and_critique(), which combines tool-use
+    (Step 3) and dual-RAG critique (Step 4) in a single 2-turn loop.
     """
     log.info("Step 4: Calling Claude API for self-critique (RAG-grounded)")
 
+    # Format ranked results as a numbered summary string for the prompt
     rec_summary = "\n".join(
         f"  #{i + 1} {song['title']} by {song['artist']} "
         f"(genre={song['genre']}, mood={song['mood']}, "
@@ -207,6 +267,7 @@ def self_critique(
         for i, (song, score, _) in enumerate(recommendations)
     )
 
+    # Summarize guardrail issues or report "None" so the critique can reference them
     guardrail_summary = (
         "\n".join(
             f"  [{issue.severity.value.upper()}] {issue.code}: {issue.message}"
@@ -216,6 +277,8 @@ def self_critique(
         else "  None"
     )
 
+    # genre_context (RAG retrieval ②) is embedded at the top of the prompt
+    # so Claude reads factual genre data before it sees the recommendations
     prompt = f"""You are reviewing music recommendations produced by a rule-based scoring engine.
 Use the retrieved genre knowledge below to ground your critique in factual data.
 
@@ -242,17 +305,17 @@ Using the retrieved genre context above, critically review these recommendations
 3. What catalog limitations or scoring biases affected the results?
 4. Overall confidence: low / medium / high — and one concrete suggestion to improve."""
 
-    parts: List[str] = []
+    parts: List[str] = []   # accumulate streaming chunks here
     try:
+        # messages.stream() returns a context manager; text_stream yields partial tokens
         with client.messages.stream(
             model="claude-opus-4-6",
-            max_tokens=512,
-            thinking={"type": "adaptive"},
+            max_tokens=512,   # 4–6 sentences fits comfortably in 512 tokens
             messages=[{"role": "user", "content": prompt}],
         ) as stream:
-            for text in stream.text_stream:
+            for text in stream.text_stream:   # each `text` is a partial token or word
                 parts.append(text)
-        critique = "".join(parts)
+        critique = "".join(parts)   # join all chunks into the full critique string
         log.info("Self-critique complete (%d chars)", len(critique))
         log.debug("Critique text: %s", critique[:300])
         return critique
@@ -263,13 +326,176 @@ Using the retrieved genre context above, critically review these recommendations
 
 
 # ---------------------------------------------------------------------------
-# Full agentic session
+# Steps 3+4: Agentic tool-use — Claude calls the recommendation engine
+# ---------------------------------------------------------------------------
+
+def run_agentic_recommendation_and_critique(
+    user_text: str,
+    profile: Dict,
+    guardrail_issues: List[GuardrailIssue],
+    genre_context: str,   # RAG retrieval ②: genre profile from knowledge/genres.json
+    mood_context: str,    # RAG retrieval ③: mood profile from knowledge/moods.json
+    songs: List[Dict],
+    client: anthropic.Anthropic,
+    log: logging.Logger,
+    k: int = 5,           # number of recommendations to return
+) -> tuple:
+    """
+    Agentic Steps 3+4: Claude calls get_song_recommendations as a tool,
+    receives the ranked results, then writes a critique grounded in
+    dual-RAG context (genre knowledge + mood knowledge).
+
+    Observable intermediate step: the tool call parameters are logged
+    and printed so the decision-making chain is fully visible.
+
+    Returns: (recommendations, critique, tool_call_summary_str)
+    """
+
+    # Tool definition sent to the Anthropic API — describes the function Claude can call.
+    # The input_schema follows JSON Schema format; the API validates Claude's tool call
+    # against this schema before returning it to us.
+    tool_def = {
+        "name": "get_song_recommendations",
+        "description": (
+            "Run the rule-based scoring engine against the 18-song catalog. "
+            "Scores each song on: genre match (+2.0), mood match (+1.5), "
+            "energy closeness (+1.5), acoustic bonus (+1.0), valence closeness (+0.5). "
+            "Max score is 6.5. Returns the top-k ranked songs."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "genre":          {"type": "string",  "description": "Genre from catalog"},
+                "mood":           {"type": "string",  "description": "Mood from catalog"},
+                "target_energy":  {"type": "number",  "description": "Energy level 0.0–1.0"},
+                "likes_acoustic": {"type": "boolean", "description": "Acoustic preference"},
+                "k":              {"type": "integer", "description": "Number of results"},
+            },
+            "required": ["genre", "mood", "target_energy", "likes_acoustic"],  # k is optional (defaults to 5)
+        },
+    }
+
+    # Summarize any guardrail issues so Claude sees them when writing the critique
+    guardrail_summary = (
+        "\n".join(
+            f"  [{i.severity.value.upper()}] {i.code}: {i.message}"
+            for i in guardrail_issues
+        ) if guardrail_issues else "  None"
+    )
+
+    # Initial prompt includes: role + dual-RAG context + profile + instructions for both turns.
+    # Providing both genre and mood context here means Claude already has the factual data
+    # it needs for the critique before any tool call happens.
+    initial_prompt = (
+        "You are a music recommendation assistant with access to a scoring engine.\n\n"
+        f"{genre_context}\n\n"    # RAG retrieval ②: genre data injected
+        f"{mood_context}\n\n"     # RAG retrieval ③: mood data injected
+        f'USER REQUEST: "{user_text}"\n'
+        f"PARSED PROFILE: genre={profile['genre']}, mood={profile['mood']}, "
+        f"energy={profile['target_energy']}, acoustic={profile['likes_acoustic']}\n"
+        f"GUARDRAIL RESULTS:\n{guardrail_summary}\n\n"
+        f"Step 1: Call get_song_recommendations with the profile above (k={k}).\n"
+        "Step 2: After receiving results, write a 4–6 sentence critique using the "
+        "retrieved genre and mood knowledge above. Address: "
+        "(1) how well results match the request, "
+        "(2) any catalog limitations or guardrail warnings, "
+        "(3) confidence level (low/medium/high), "
+        "(4) one concrete improvement suggestion."
+    )
+
+    messages = [{"role": "user", "content": initial_prompt}]  # conversation history, grows with each turn
+    recommendations = None         # populated after the tool executes
+    tool_call_summary = "(no tool call)"   # overwritten if Claude issues a tool call
+
+    log.info("Step 3: Agentic call — Claude invoking get_song_recommendations tool")
+
+    # --- Turn 1: send the profile to Claude; expect it to respond with a tool_use block ---
+    response = client.messages.create(
+        model="claude-opus-4-6",
+        max_tokens=1024,     # enough for Claude to produce the tool call JSON
+        tools=[tool_def],    # makes get_song_recommendations available to Claude
+        messages=messages,
+    )
+
+    if response.stop_reason == "tool_use":
+        # Claude issued a tool call — extract the tool_use block from the response
+        tool_block = next(b for b in response.content if b.type == "tool_use")
+        inp = tool_block.input   # dict of parameters Claude chose (genre, mood, energy, etc.)
+
+        # Build a human-readable summary of the tool call for logging and terminal output
+        tool_call_summary = (
+            f"get_song_recommendations("
+            f"genre={inp.get('genre')!r}, "
+            f"mood={inp.get('mood')!r}, "
+            f"target_energy={inp.get('target_energy')}, "
+            f"likes_acoustic={inp.get('likes_acoustic')}, "
+            f"k={inp.get('k', k)})"
+        )
+        log.info("Tool called: %s", tool_call_summary)
+
+        # Execute the tool deterministically using the rule-based engine.
+        # Claude's parameters take priority; fall back to the parsed profile if any field is missing.
+        tool_profile = {
+            "genre":          inp.get("genre",          profile["genre"]),
+            "mood":           inp.get("mood",           profile["mood"]),
+            "target_energy":  inp.get("target_energy",  profile["target_energy"]),
+            "likes_acoustic": inp.get("likes_acoustic", profile["likes_acoustic"]),
+        }
+        recommendations = recommend_songs(tool_profile, songs, k=inp.get("k", k))
+
+        # Format the tool result as a plain-text string to send back in Turn 2
+        rec_text = "\n".join(
+            f"#{i + 1} {s['title']} by {s['artist']} "
+            f"(genre={s['genre']}, mood={s['mood']}, energy={s['energy']}, score={sc:.2f}/6.5)"
+            for i, (s, sc, _) in enumerate(recommendations)
+        )
+        log.info(
+            "Tool returned %d results; top=%r score=%.2f",
+            len(recommendations),
+            recommendations[0][0]["title"] if recommendations else "N/A",
+            recommendations[0][1] if recommendations else 0.0,
+        )
+
+        # --- Turn 2: append assistant response + tool result, then ask for the streaming critique ---
+        messages.append({"role": "assistant", "content": response.content})  # Claude's Turn 1 response
+        messages.append({
+            "role": "user",
+            # tool_result block is required by the API when replying to a tool_use block
+            "content": [{"type": "tool_result", "tool_use_id": tool_block.id, "content": rec_text}],
+        })
+
+        parts: List[str] = []   # collect streaming text chunks
+        with client.messages.stream(
+            model="claude-opus-4-6",
+            max_tokens=512,    # 4–6 sentence critique fits in 512 tokens
+            messages=messages, # full 2-turn conversation: system+user → tool_call → tool_result
+        ) as stream:
+            for text in stream.text_stream:   # each chunk is a partial token
+                parts.append(text)
+        critique = "".join(parts)   # reassemble full critique from streaming chunks
+        log.info("Step 4: Critique complete (%d chars)", len(critique))
+
+    else:
+        # Fallback path: Claude responded in plain text without calling the tool.
+        # This should not happen in normal operation but is handled gracefully.
+        log.warning("Claude did not issue a tool call; falling back to direct recommendation")
+        critique = next(
+            (b.text for b in response.content if hasattr(b, "text")),
+            "No critique generated.",
+        )
+        recommendations = recommend_songs(profile, songs, k=k)  # run engine directly as fallback
+
+    return recommendations, critique, tool_call_summary   # caller unpacks all three values
+
+
+# ---------------------------------------------------------------------------
+# Full agentic session — orchestrates all 4 steps
 # ---------------------------------------------------------------------------
 
 def run_agentic_session(
     user_text: str,
-    songs_path: str = _SONGS_PATH,
-    k: int = 5,
+    songs_path: str = _SONGS_PATH,  # defaults to data/songs.csv relative to this file
+    k: int = 5,                     # number of recommendations to return
 ) -> None:
     """
     Full pipeline: free-text input -> RAG-grounded NL parse -> guardrails
@@ -277,9 +503,10 @@ def run_agentic_session(
 
     Logs every step to logs/sessions.log.
     """
-    session_id = new_session_id()
-    log = get_logger(session_id)
+    session_id = new_session_id()   # 8-char hex UUID — unique per run, used in log lines
+    log = get_logger(session_id)    # session-scoped logger writing to logs/sessions.log
 
+    # Fail fast if no API key — avoids cryptic SDK errors later
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         log.error("ANTHROPIC_API_KEY environment variable is not set")
@@ -289,6 +516,7 @@ def run_agentic_session(
 
     log.info("=== Session started | request: %s", user_text)
 
+    # Load song catalog — fail gracefully if the CSV is missing
     try:
         songs = load_songs(songs_path)
     except FileNotFoundError:
@@ -298,15 +526,22 @@ def run_agentic_session(
 
     log.info("Catalog loaded: %d songs", len(songs))
 
-    kb = load_knowledge_base()
+    # Load both knowledge bases upfront — used at multiple points in the pipeline
+    kb = load_knowledge_base()            # knowledge/genres.json → genre profiles
+    kb_moods = load_mood_knowledge_base() # knowledge/moods.json  → mood profiles
+
+    # Derive the set of genres that actually exist in the catalog — used for guardrails
+    # and for the RAG catalog overview (only lists genres present in songs.csv)
     catalog_genres = {s["genre"] for s in songs}
 
-    # RAG retrieval for Step 1
+    # RAG retrieval ①: build the genre table injected into the NL parsing prompt
     catalog_overview = format_catalog_overview(catalog_genres, kb)
     log.debug("RAG: catalog overview retrieved (%d genres)", len(catalog_genres))
 
+    # Instantiate the Anthropic client once; reused for all API calls in this session
     client = anthropic.Anthropic(api_key=api_key)
 
+    # Visual formatting constants
     width = 65
     sep = "=" * width
     thin = "-" * width
@@ -327,6 +562,7 @@ def run_agentic_session(
         log.info("=== Session ended with error (Step 1)")
         return
 
+    # Convert Pydantic object to a plain dict used by the rest of the pipeline
     profile = {
         "genre": extraction.favorite_genre,
         "mood": extraction.favorite_mood,
@@ -341,7 +577,7 @@ def run_agentic_session(
     if extraction.extraction_notes:
         print(f"    Notes      : {extraction.extraction_notes}")
 
-    # Warn if confidence is low
+    # Log a warning when confidence is below 50% — signal that the profile may be unreliable
     if extraction.extraction_confidence < 0.5:
         log.warning(
             "Low extraction confidence (%.0f%%) — profile may not reflect user intent",
@@ -349,11 +585,12 @@ def run_agentic_session(
         )
 
     # ------------------------------------------------------------------
-    # Step 2: Guardrails
+    # Step 2: Guardrails (pre-flight checks before any scoring)
     # ------------------------------------------------------------------
     print(f"\n  [2/4] Running guardrails...")
-    issues = run_guardrails(profile, songs)
+    issues = run_guardrails(profile, songs)   # returns list of GuardrailIssue objects
 
+    # Log each issue at the appropriate severity level
     for issue in issues:
         if issue.severity == Severity.ERROR:
             log.error("Guardrail ERROR — %s: %s", issue.code, issue.message)
@@ -362,7 +599,8 @@ def run_agentic_session(
         else:
             log.info("Guardrail INFO — %s: %s", issue.code, issue.message)
 
-    # RAG fallback: if genre gap detected, find closest catalog match
+    # RAG fallback: if the genre isn't in the catalog, look up the closest catalog genre
+    # using the similar_genres list in knowledge/genres.json
     genre_gap = next((i for i in issues if i.code == "GENRE_NOT_IN_CATALOG"), None)
     if genre_gap:
         closest = find_closest_catalog_genre(profile["genre"], catalog_genres, kb)
@@ -371,55 +609,58 @@ def run_agentic_session(
             print(f"  [RAG] Genre '{profile['genre']}' not in catalog.")
             print(f"        Knowledge base suggests closest match: '{closest}'")
 
+    # Print guardrail results — format_issues() renders severity icons and suggestions
     if issues:
         print(format_issues(issues))
     else:
         print("  No issues detected.")
 
     # ------------------------------------------------------------------
-    # Step 3: Rule-based recommendations
+    # Steps 3+4: Agentic tool call + dual-RAG critique
     # ------------------------------------------------------------------
-    print(f"\n  [3/4] Scoring {len(songs)} songs with rule engine...")
-    recommendations = recommend_songs(profile, songs, k=k)
-    log.info(
-        "Recommendations: top result='%s' score=%.2f",
-        recommendations[0][0]["title"] if recommendations else "N/A",
-        recommendations[0][1] if recommendations else 0.0,
-    )
+    print(f"\n  [3/4] Agentic: Claude calling recommendation tool...")
 
+    # RAG retrieval ②+③: retrieve both genre and mood context before the agentic call.
+    # Both are injected into the critique prompt so Claude can ground its analysis
+    # in factual energy/valence ranges rather than general knowledge.
+    genre_context = format_genre_context(profile["genre"], kb)
+    mood_context = format_mood_context(profile["mood"], kb_moods)
+    log.debug("RAG: retrieved genre context for '%s'", profile["genre"])
+    log.debug("RAG: retrieved mood context for '%s'", profile["mood"])
+
+    try:
+        recommendations, critique, tool_call_summary = run_agentic_recommendation_and_critique(
+            user_text, profile, issues, genre_context, mood_context, songs, client, log, k=k
+        )
+    except anthropic.APIError:
+        print("  [ERROR] Agentic call failed. Check logs/sessions.log.")
+        log.info("=== Session ended with error (Steps 3+4)")
+        return
+
+    # Print the observable intermediate step — shows exactly what parameters Claude chose
+    print(f"  → Tool call: {tool_call_summary}")
+    print(f"  ← Tool returned {len(recommendations)} songs")
+
+    # Print ranked recommendations with visual score bar
     print(f"\n  Top {k} Recommendations:")
     for rank, (song, score, explanation) in enumerate(recommendations, 1):
-        pct = score / 6.5
-        bar = "#" * int(pct * 10) + "-" * (10 - int(pct * 10))
+        pct = score / 6.5                                   # normalize to 0–1 for the bar
+        bar = "#" * int(pct * 10) + "-" * (10 - int(pct * 10))  # 10-char ASCII bar
         print(f"\n    #{rank}  {song['title']} by {song['artist']}")
         print(f"         Score  : {score:.2f}/6.5  [{bar}] {pct:.0%} match")
         print(f"         Genre  : {song['genre']} | Mood: {song['mood']} | Energy: {song['energy']}")
         print("         Why    :")
-        for reason in explanation.split("; "):
+        for reason in explanation.split("; "):   # explanation is semicolon-delimited reasons
             print(f"           - {reason}")
 
     # ------------------------------------------------------------------
-    # Step 4: RAG-grounded self-critique
+    # Step 4: Print streaming critique
     # ------------------------------------------------------------------
-    print(f"\n  [4/4] Claude self-critique (RAG-grounded)...")
-
-    # Retrieve genre context for the top result's genre
-    top_genre = recommendations[0][0]["genre"] if recommendations else profile["genre"]
-    genre_context = format_genre_context(top_genre, kb)
-    log.debug("RAG: retrieved context for genre '%s'", top_genre)
-
+    print(f"\n  [4/4] Claude self-critique (dual-RAG: genre + mood)...")
     print(f"  {thin}")
-    try:
-        critique = self_critique(
-            user_text, profile, recommendations, issues, genre_context, client, log
-        )
-        for line in critique.strip().splitlines():
-            print(f"  {line}")
-    except anthropic.APIError:
-        print("  [ERROR] Critique call failed. Check logs/sessions.log.")
-        log.info("=== Session ended with error (Step 4)")
-    else:
-        log.info("=== Session completed successfully")
+    for line in critique.strip().splitlines():
+        print(f"  {line}")   # indent each line to align with session output
+    log.info("=== Session completed successfully")
     print(f"  {thin}")
 
     print(f"\n  Log written to: logs/sessions.log  [session={session_id}]")
@@ -432,16 +673,18 @@ def run_agentic_session(
 
 def main() -> None:
     if len(sys.argv) > 1:
-        user_text = " ".join(sys.argv[1:])
+        # Single-request mode: `python -m src.agent "my request here"`
+        user_text = " ".join(sys.argv[1:])   # join in case the request has spaces
         run_agentic_session(user_text)
     else:
+        # Interactive mode: prompts the user in a loop until Ctrl+C
         print("\nAI Music Recommender — Agentic Mode")
         print("Type your music request in plain English. Press Ctrl+C to quit.\n")
         try:
             while True:
                 user_text = input("Your request: ").strip()
                 if not user_text:
-                    continue
+                    continue   # ignore empty input — prompt again
                 run_agentic_session(user_text)
                 print()
         except KeyboardInterrupt:
