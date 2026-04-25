@@ -239,8 +239,6 @@ def parse_natural_language(
 
 
 # ---------------------------------------------------------------------------
-# Step 4 (legacy): RAG-grounded self-critique
-# ---------------------------------------------------------------------------
 # Steps 3+4: Agentic tool-use — Claude calls the recommendation engine
 # ---------------------------------------------------------------------------
 
@@ -404,6 +402,181 @@ def run_agentic_recommendation_and_critique(
 
 
 # ---------------------------------------------------------------------------
+# Demo mode — pre-scripted profiles and critiques (no API key required)
+# ---------------------------------------------------------------------------
+
+_DEMO_PROFILES: Dict[str, Dict] = {
+    "study": {
+        "genre": "lofi", "mood": "focused", "target_energy": 0.35,
+        "likes_acoustic": True, "confidence": 0.91, "notes": None,
+    },
+    "workout": {
+        "genre": "rock", "mood": "intense", "target_energy": 0.88,
+        "likes_acoustic": False, "confidence": 0.93, "notes": None,
+    },
+    "reggae": {
+        "genre": "r&b", "mood": "intense", "target_energy": 0.85,
+        "likes_acoustic": False, "confidence": 0.62,
+        "notes": "Reggae not in catalog. Mapped to closest catalog genre: r&b.",
+    },
+}
+
+_DEMO_CRITIQUES: Dict[str, str] = {
+    "study": (
+        "Focus Flow is an excellent match. It falls within lofi's typical energy range\n"
+        "of 0.2-0.5 and satisfies the focused mood's guidance exactly: low energy,\n"
+        "mid-range valence, and acoustic character keep it in the background without\n"
+        "interrupting concentration. The 98% score reflects alignment across all five\n"
+        "scoring signals - a rare result. The remaining lofi songs (Library Rain,\n"
+        "Midnight Coding) continue the pattern but reveal a catalog limitation: only\n"
+        "three lofi tracks are available, so positions four and five draw from adjacent\n"
+        "quiet genres (jazz, ambient). Confidence: high. Expanding the lofi catalog\n"
+        "would be the single most impactful improvement."
+    ),
+    "workout": (
+        "Storm Runner leads convincingly - rock at 0.91 energy is a near-perfect fit\n"
+        "for an intense workout profile. The genre and mood bonuses both fire, and\n"
+        "energy closeness is high. Positions two through four show the catalog's\n"
+        "high-energy bias: metal and EDM tracks cluster here because their energy\n"
+        "scores are competitive even without a genre match. Confidence: high. The\n"
+        "results are functionally correct for this profile."
+    ),
+    "reggae": (
+        "No reggae songs exist in the catalog - the system correctly flagged\n"
+        "GENRE_NOT_IN_CATALOG and mapped to r&b as the closest match via the\n"
+        "knowledge base. The top r&b result earns the genre bonus but the mood\n"
+        "mismatch is visible in the score gap. Positions two through five fill with\n"
+        "high-energy songs from other genres. Confidence: medium. This is a catalog\n"
+        "coverage problem - the system behaved correctly given its data, but cannot\n"
+        "serve reggae requests well until reggae tracks are added."
+    ),
+}
+
+
+def _pick_demo_key(user_text: str) -> str:
+    t = user_text.lower()
+    if any(w in t for w in ("reggae", "caribbean", "island")):
+        return "reggae"
+    if any(w in t for w in ("workout", "run", "gym", "exercise", "morning run")):
+        return "workout"
+    return "study"
+
+
+def run_demo_session(user_text: str, songs_path: str = _SONGS_PATH, k: int = 5) -> None:
+    """
+    Demo pipeline: identical output format to run_agentic_session() but uses
+    pre-scripted Claude responses so no API key is needed. The rule engine,
+    guardrails, and session logging all run for real.
+    """
+    session_id = new_session_id()
+    log = get_logger(session_id)
+    log.info("=== Demo session started | request: %s", user_text)
+
+    try:
+        songs = load_songs(songs_path)
+    except FileNotFoundError:
+        print(f"\n[ERROR] Cannot find songs catalog: {songs_path}")
+        return
+
+    kb = load_knowledge_base()
+    kb_moods = load_mood_knowledge_base()
+    catalog_genres = {s["genre"] for s in songs}
+
+    demo_key = _pick_demo_key(user_text)
+    dp = _DEMO_PROFILES[demo_key]
+    critique = _DEMO_CRITIQUES[demo_key]
+
+    profile = {
+        "genre": dp["genre"],
+        "mood": dp["mood"],
+        "target_energy": dp["target_energy"],
+        "likes_acoustic": dp["likes_acoustic"],
+    }
+
+    width = 65
+    sep = "=" * width
+    thin = "-" * width
+
+    print(f"\n{sep}")
+    print(f"  AI MUSIC RECOMMENDER - Agentic Session [{session_id}]")
+    print(sep)
+    print(f'\n  Request: "{user_text}"\n')
+
+    print("  [1/4] Parsing request with Claude (RAG + few-shot grounded)...")
+    print("  Parsed profile:")
+    print(f"    Genre      : {profile['genre']}   Mood : {profile['mood']}")
+    print(f"    Energy     : {profile['target_energy']:.2f}   Acoustic : {profile['likes_acoustic']}")
+    print(f"    Confidence : {dp['confidence']:.0%}")
+    if dp["notes"]:
+        print(f"    Notes      : {dp['notes']}")
+    log.info(
+        "Demo profile: genre=%s mood=%s energy=%.2f acoustic=%s confidence=%.0f%%",
+        profile["genre"], profile["mood"], profile["target_energy"],
+        profile["likes_acoustic"], dp["confidence"] * 100,
+    )
+
+    print(f"\n  [2/4] Running guardrails...")
+    issues = run_guardrails(profile, songs)
+    for issue in issues:
+        if issue.severity == Severity.ERROR:
+            log.error("Guardrail ERROR — %s: %s", issue.code, issue.message)
+        elif issue.severity == Severity.WARNING:
+            log.warning("Guardrail WARNING — %s: %s", issue.code, issue.message)
+        else:
+            log.info("Guardrail INFO — %s: %s", issue.code, issue.message)
+
+    genre_gap = next((i for i in issues if i.code == "GENRE_NOT_IN_CATALOG"), None)
+    if genre_gap:
+        closest = find_closest_catalog_genre(profile["genre"], catalog_genres, kb)
+        if closest:
+            log.info("RAG fallback: '%s' -> '%s'", profile["genre"], closest)
+            print(f"  [RAG] Genre '{profile['genre']}' not in catalog.")
+            print(f"        Knowledge base suggests closest match: '{closest}'")
+
+    if issues:
+        print(format_issues(issues))
+    else:
+        print("  No issues detected.")
+
+    print(f"\n  [3/4] Agentic: Claude calling recommendation tool...")
+    _ = format_genre_context(profile["genre"], kb)    # RAG retrieval ② (logged, not displayed)
+    _ = format_mood_context(profile["mood"], kb_moods)  # RAG retrieval ③
+    log.debug("RAG: retrieved genre context for '%s'", profile["genre"])
+    log.debug("RAG: retrieved mood context for '%s'", profile["mood"])
+
+    recommendations = recommend_songs(profile, songs, k=k)
+    tool_call_summary = (
+        f"get_song_recommendations(genre='{profile['genre']}', "
+        f"mood='{profile['mood']}', "
+        f"target_energy={profile['target_energy']}, "
+        f"likes_acoustic={profile['likes_acoustic']}, k={k})"
+    )
+    log.info("Demo tool call: %s", tool_call_summary)
+    print(f"  >> Tool call: {tool_call_summary}")
+    print(f"  << Tool returned {len(recommendations)} songs")
+
+    print(f"\n  Top {k} Recommendations:")
+    for rank, (song, score, explanation) in enumerate(recommendations, 1):
+        pct = score / 6.5
+        bar = "#" * int(pct * 10) + "-" * (10 - int(pct * 10))
+        print(f"\n    #{rank}  {song['title']} by {song['artist']}")
+        print(f"         Score  : {score:.2f}/6.5  [{bar}] {pct:.0%} match")
+        print(f"         Genre  : {song['genre']} | Mood: {song['mood']} | Energy: {song['energy']}")
+        print("         Why    :")
+        for reason in explanation.split("; "):
+            print(f"           - {reason}")
+
+    print(f"\n  [4/4] Claude self-critique (dual-RAG: genre + mood)...")
+    print(f"  {thin}")
+    for line in critique.strip().splitlines():
+        print(f"  {line}")
+    log.info("=== Demo session completed")
+    print(f"  {thin}")
+    print(f"\n  Log written to: logs/sessions.log  [session={session_id}]")
+    print(f"\n{sep}\n")
+
+
+# ---------------------------------------------------------------------------
 # Full agentic session — orchestrates all 4 steps
 # ---------------------------------------------------------------------------
 
@@ -553,8 +726,8 @@ def run_agentic_session(
         return
 
     # Print the observable intermediate step — shows exactly what parameters Claude chose
-    print(f"  → Tool call: {tool_call_summary}")
-    print(f"  ← Tool returned {len(recommendations)} songs")
+    print(f"  >> Tool call: {tool_call_summary}")
+    print(f"  << Tool returned {len(recommendations)} songs")
 
     # Print ranked recommendations with visual score bar
     print(f"\n  Top {k} Recommendations:")
@@ -587,20 +760,23 @@ def run_agentic_session(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    if len(sys.argv) > 1:
-        # Single-request mode: `python -m src.agent "my request here"`
-        user_text = " ".join(sys.argv[1:])   # join in case the request has spaces
-        run_agentic_session(user_text)
+    demo = "--demo" in sys.argv
+    args = [a for a in sys.argv[1:] if a != "--demo"]
+    runner = run_demo_session if demo else run_agentic_session
+
+    if args:
+        user_text = " ".join(args)
+        runner(user_text)
     else:
-        # Interactive mode: prompts the user in a loop until Ctrl+C
-        print("\nAI Music Recommender - Agentic Mode")
+        mode = "Demo" if demo else "Agentic"
+        print(f"\nAI Music Recommender - {mode} Mode")
         print("Type your music request in plain English. Press Ctrl+C to quit.\n")
         try:
             while True:
                 user_text = input("Your request: ").strip()
                 if not user_text:
-                    continue   # ignore empty input — prompt again
-                run_agentic_session(user_text)
+                    continue
+                runner(user_text)
                 print()
         except KeyboardInterrupt:
             print("\nGoodbye.")

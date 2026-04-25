@@ -168,7 +168,7 @@ def format_issues(issues: List[GuardrailIssue]) -> str:
     lines = []
     for issue in issues:
         icon = icons[issue.severity]
-        lines.append(f"  {icon} {issue.severity.value.upper()} — {issue.code}")
+        lines.append(f"  {icon} {issue.severity.value.upper()} - {issue.code}")
         lines.append(f"      {issue.message}")
         lines.append(f"      -> {issue.suggestion}")
     return "\n".join(lines)   # single string with embedded newlines for print()
