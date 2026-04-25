@@ -40,6 +40,12 @@ from typing import Optional, List, Dict   # type hints for all function signatur
 from pydantic import BaseModel, Field     # structured output schema + field-level validators
 import anthropic   # Anthropic Python SDK — messages.parse, messages.create, messages.stream
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 # Dual import path: supports both `python -m src.agent` (package mode)
 # and direct execution from the src/ directory (`python agent.py`)
 try:
@@ -234,97 +240,6 @@ def parse_natural_language(
 
 # ---------------------------------------------------------------------------
 # Step 4 (legacy): RAG-grounded self-critique
-# ---------------------------------------------------------------------------
-
-def self_critique(
-    user_text: str,
-    profile: Dict,
-    recommendations: List,
-    guardrail_issues: List[GuardrailIssue],
-    genre_context: str,   # pre-retrieved genre profile from knowledge/genres.json
-    client: anthropic.Anthropic,
-    log: logging.Logger,
-) -> str:
-    """
-    Stream a Claude critique of the rule engine's recommendations.
-
-    RAG integration: `genre_context` (retrieved for the top recommended song's
-    genre) is injected into the prompt. Claude compares actual results against
-    the retrieved expected characteristics (energy range, typical moods) and
-    flags mismatches that the rule engine cannot detect on its own.
-
-    NOTE: This function is preserved for reference but is superseded by
-    run_agentic_recommendation_and_critique(), which combines tool-use
-    (Step 3) and dual-RAG critique (Step 4) in a single 2-turn loop.
-    """
-    log.info("Step 4: Calling Claude API for self-critique (RAG-grounded)")
-
-    # Format ranked results as a numbered summary string for the prompt
-    rec_summary = "\n".join(
-        f"  #{i + 1} {song['title']} by {song['artist']} "
-        f"(genre={song['genre']}, mood={song['mood']}, "
-        f"energy={song['energy']}, score={score:.2f}/6.5)"
-        for i, (song, score, _) in enumerate(recommendations)
-    )
-
-    # Summarize guardrail issues or report "None" so the critique can reference them
-    guardrail_summary = (
-        "\n".join(
-            f"  [{issue.severity.value.upper()}] {issue.code}: {issue.message}"
-            for issue in guardrail_issues
-        )
-        if guardrail_issues
-        else "  None"
-    )
-
-    # genre_context (RAG retrieval ②) is embedded at the top of the prompt
-    # so Claude reads factual genre data before it sees the recommendations
-    prompt = f"""You are reviewing music recommendations produced by a rule-based scoring engine.
-Use the retrieved genre knowledge below to ground your critique in factual data.
-
-{genre_context}
-
-USER'S ORIGINAL REQUEST:
-"{user_text}"
-
-PARSED PROFILE:
-- Genre: {profile['genre']}
-- Mood: {profile['mood']}
-- Energy: {profile['target_energy']}
-- Likes acoustic: {profile['likes_acoustic']}
-
-GUARDRAIL WARNINGS:
-{guardrail_summary}
-
-TOP {len(recommendations)} RECOMMENDATIONS (rule engine, max 6.5 pts):
-{rec_summary}
-
-Using the retrieved genre context above, critically review these recommendations in 4-6 sentences:
-1. Do the results match the user's request? Compare actual song energies to the retrieved typical range.
-2. Does the top result's genre and mood align with what the user described?
-3. What catalog limitations or scoring biases affected the results?
-4. Overall confidence: low / medium / high — and one concrete suggestion to improve."""
-
-    parts: List[str] = []   # accumulate streaming chunks here
-    try:
-        # messages.stream() returns a context manager; text_stream yields partial tokens
-        with client.messages.stream(
-            model="claude-opus-4-6",
-            max_tokens=512,   # 4–6 sentences fits comfortably in 512 tokens
-            messages=[{"role": "user", "content": prompt}],
-        ) as stream:
-            for text in stream.text_stream:   # each `text` is a partial token or word
-                parts.append(text)
-        critique = "".join(parts)   # join all chunks into the full critique string
-        log.info("Self-critique complete (%d chars)", len(critique))
-        log.debug("Critique text: %s", critique[:300])
-        return critique
-
-    except anthropic.APIError as e:
-        log.error("Claude API error during self-critique: %s", e)
-        raise
-
-
 # ---------------------------------------------------------------------------
 # Steps 3+4: Agentic tool-use — Claude calls the recommendation engine
 # ---------------------------------------------------------------------------
@@ -547,7 +462,7 @@ def run_agentic_session(
     thin = "-" * width
 
     print(f"\n{sep}")
-    print(f"  AI MUSIC RECOMMENDER — Agentic Session [{session_id}]")
+    print(f"  AI MUSIC RECOMMENDER - Agentic Session [{session_id}]")
     print(sep)
     print(f'\n  Request: "{user_text}"\n')
 
@@ -678,7 +593,7 @@ def main() -> None:
         run_agentic_session(user_text)
     else:
         # Interactive mode: prompts the user in a loop until Ctrl+C
-        print("\nAI Music Recommender — Agentic Mode")
+        print("\nAI Music Recommender - Agentic Mode")
         print("Type your music request in plain English. Press Ctrl+C to quit.\n")
         try:
             while True:

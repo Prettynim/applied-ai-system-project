@@ -32,7 +32,7 @@ Every step is logged to `logs/sessions.log` with a unique session ID. A separate
 
 ## System Architecture
 
-![System architecture diagram](assets/architecture.png)
+![System architecture diagram](assets/Architecture.png)
 
 The system has three distinct pathways:
 
