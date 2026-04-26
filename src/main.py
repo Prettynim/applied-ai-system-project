@@ -9,7 +9,9 @@ You will implement the functions in recommender.py:
 - recommend_songs
 """
 
-from recommender import load_songs, recommend_songs
+from pathlib import Path
+
+from .recommender import load_songs, recommend_songs
 
 
 def print_recommendations(profile_name: str, profile: dict, results: list) -> None:
@@ -33,7 +35,7 @@ def print_recommendations(profile_name: str, profile: dict, results: list) -> No
 
 
 def main() -> None:
-    songs = load_songs("../data/songs.csv")
+    songs = load_songs(Path(__file__).parent.parent / "data" / "songs.csv")
     print(f"Catalog loaded: {len(songs)} songs")
 
     # --- User Profiles ---

@@ -4,7 +4,22 @@
       "Bash(python -m src.main)",
       "Bash(python main.py)",
       "Bash(python -c \"from recommender import load_songs; songs = load_songs\\(''../data/songs.csv''\\); print\\(f''Loaded songs: {len\\(songs\\)}''\\); print\\(songs[0]\\)\")",
-      "Bash(python -c \":*)"
+      "Bash(python -c \":*)",
+      "Bash(git -C /c/Users/sgwck/Desktop/applied-ai-system-project log --oneline -10)",
+      "Bash(git -C /c/Users/sgwck/Desktop/applied-ai-system-project remote -v)",
+      "Bash(python -m pytest tests/ --tb=short -q)",
+      "Bash(python *)",
+      "Bash(git *)",
+      "Bash(wc *)",
+      "Bash(pip install *)",
+      "Bash(> logs/sessions.log)",
+      "Bash(.venv/Scripts/pip install *)",
+      "Bash(code src/agent.py src/guardrails.py src/evaluator.py assets/Architecture.png logs/sessions.log)",
+      "Bash(.venv/Scripts/python --version)",
+      "Bash(.venv/Scripts/python -c \"from dotenv import load_dotenv; load_dotenv\\(\\); import os; key = os.environ.get\\('ANTHROPIC_API_KEY', ''\\); print\\('Key set:', bool\\(key\\), '| Starts with sk-ant:', key.startswith\\('sk-ant'\\) if key else False\\)\")",
+      "Bash(.venv/Scripts/python -m src.agent \"I want something calm and focused for studying, maybe acoustic\")",
+      "Bash(gh pr *)",
+      "Bash(pytest *)"
     ]
   }
 }
