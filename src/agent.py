@@ -557,8 +557,8 @@ def run_demo_session(user_text: str, songs_path: str = _SONGS_PATH, k: int = 5) 
         f"likes_acoustic={profile['likes_acoustic']}, k={k})"
     )
     log.info("Demo tool call: %s", tool_call_summary)
-    print(f"  >> Tool call: {tool_call_summary}")
-    print(f"  << Tool returned {len(recommendations)} songs")
+    print(f"  → Tool call: {tool_call_summary}")
+    print(f"  ← Tool returned {len(recommendations)} songs")
 
     print(f"\n  Top {k} Recommendations:")
     for rank, (song, score, explanation) in enumerate(recommendations, 1):
@@ -731,8 +731,8 @@ def run_agentic_session(
         return
 
     # Print the observable intermediate step — shows exactly what parameters Claude chose
-    print(f"  >> Tool call: {tool_call_summary}")
-    print(f"  << Tool returned {len(recommendations)} songs")
+    print(f"  → Tool call: {tool_call_summary}")
+    print(f"  ← Tool returned {len(recommendations)} songs")
 
     # Print ranked recommendations with visual score bar
     print(f"\n  Top {k} Recommendations:")
