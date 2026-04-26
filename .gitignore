@@ -1,3 +1,5 @@
+.env
+
 # Byte compiled
 __pycache__/
 *.py[cod]
@@ -13,3 +15,9 @@ venv/
 
 # Pytest cache
 .pytest_cache/
+
+# Session logs (runtime output)
+logs/*.log
+
+# Claude Code IDE settings
+.claude/
