@@ -36,6 +36,11 @@ Usage:
 import os          # os.path for data file paths; os.environ for API key
 import sys         # sys.argv to accept optional CLI argument
 import logging     # standard library logger, wrapped by src/logger.py
+
+# Force UTF-8 output on Windows so special characters don't crash the terminal
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 from typing import Optional, List, Dict   # type hints for all function signatures
 from pydantic import BaseModel, Field     # structured output schema + field-level validators
 import anthropic   # Anthropic Python SDK — messages.parse, messages.create, messages.stream
@@ -760,8 +765,10 @@ def run_agentic_session(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    demo = "--demo" in sys.argv
-    args = [a for a in sys.argv[1:] if a != "--demo"]
+    # Normalize en-dash/em-dash to hyphens (terminals sometimes auto-convert --)
+    argv = [a.replace("–", "-").replace("—", "-") for a in sys.argv[1:]]
+    demo = "--demo" in argv
+    args = [a for a in argv if a != "--demo"]
     runner = run_demo_session if demo else run_agentic_session
 
     if args:
