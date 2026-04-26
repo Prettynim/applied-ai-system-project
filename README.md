@@ -3,7 +3,7 @@
 An AI-powered music recommendation system that accepts free-text requests, retrieves supporting knowledge, scores a catalog of songs, and then critiques its own results — all in a single agentic pipeline built on the Claude API.
 
 **GitHub:** https://github.com/Prettynim/applied-ai-system-project  
-**Video walkthrough:** *(Loom link — add after recording)*
+**Video walkthrough:** https://www.loom.com/share/23435db8309a450c91ef0c9eeca93246
 
 ---
 
@@ -144,6 +144,20 @@ python -m src.agent
 python -m src.agent "I want something calm and focused for studying"
 ```
 
+### Demo mode (no API key needed)
+
+Uses pre-scripted Claude responses so the full pipeline output can be seen without an API key. The rule engine, guardrails, and session logging all run for real.
+
+```bash
+# Interactive demo — Ctrl+C to quit
+python -m src.agent --demo
+
+# Single-request demo
+python -m src.agent --demo "I want something calm and focused for studying"
+```
+
+> Demo mode recognises three request types: study/focus requests, workout/run requests, and reggae/off-catalog requests. All other inputs fall back to the study profile.
+
 ### Reliability evaluator (no API key needed)
 
 ```bash
@@ -180,12 +194,12 @@ Your request: I want something calm and focused for studying, maybe acoustic
 **Output:**
 ```
 =================================================================
-  AI MUSIC RECOMMENDER — Agentic Session [3a8f21c0]
+  AI MUSIC RECOMMENDER - Agentic Session [3a8f21c0]
 =================================================================
 
   Request: "I want something calm and focused for studying, maybe acoustic"
 
-  [1/4] Parsing request with Claude (RAG + few-shot grounded)...
+  [1/4] Parsing request with Claude (RAG-grounded)...
   Parsed profile:
     Genre      : lofi   Mood : focused
     Energy     : 0.35   Acoustic : True
@@ -244,7 +258,7 @@ Your request: High energy for a morning run, I want guitars not electronic
 **Output:**
 ```
 =================================================================
-  AI MUSIC RECOMMENDER — Agentic Session [b72e90d1]
+  AI MUSIC RECOMMENDER - Agentic Session [b72e90d1]
 =================================================================
 
   Request: "High energy for a morning run, I want guitars not electronic"
@@ -306,7 +320,7 @@ Your request: Something with reggae vibes, upbeat and feel-good
 **Output:**
 ```
 =================================================================
-  AI MUSIC RECOMMENDER — Agentic Session [f1a34b88]
+  AI MUSIC RECOMMENDER - Agentic Session [f1a34b88]
 =================================================================
 
   Request: "Something with reggae vibes, upbeat and feel-good"
@@ -492,7 +506,7 @@ An early version of `agent.py` included `thinking={"type": "adaptive"}` in the s
 
 **GitHub:** https://github.com/Prettynim/applied-ai-system-project
 
-**Video walkthrough:** *(Loom link — add after recording)*
+**Video walkthrough:** https://www.loom.com/share/23435db8309a450c91ef0c9eeca93246
 
 ### What This Project Says About Me as an AI Engineer
 
